@@ -56,24 +56,37 @@
 #if defined(HAVE_FEATURE_EXPERIMENTAL)
 
 struct shmemx_am_handler2id_map *am_maphashptr=NULL;
+volatile struct shmemx_am_handler2id_map bcast_handler_entry;
 volatile int request_cnt = 0;
 
 
 void 
-shmemx_am_attach (int function_id, shmemx_am_handler_w_token function_handler)
+shmemx_am_attach (int function_id, shmemx_am_handler_w_token function_handler, int metric_choice_code)
 {
    struct shmemx_am_handler2id_map* temp_handler_entry;
    struct shmemx_am_handler2id_map* temp_entry;
    temp_handler_entry = (struct shmemx_am_handler2id_map*) malloc(sizeof(struct shmemx_am_handler2id_map));
    temp_handler_entry->id = function_id;
    temp_handler_entry->fn_ptr = function_handler;
+
+#ifdef EESHMEM_ENABLED
+   temp_handler_entry->metric_choice_code = metric_choice_code;
+   temp_handler_entry->pstate_direction = 1;
+   temp_handler_entry->best_pstate = ORIGINAL_PSTATE;
+   temp_handler_entry->next_pstate = ORIGINAL_PSTATE;
+   temp_handler_entry->best_metric = DBL_MAX;
+   temp_handler_entry->timestamp   = 0 ;
+   temp_handler_entry->flag = INIT;
+   bcast_handler_entry.id=-1;
+#endif
+
    HASH_FIND_INT(am_maphashptr, &function_id, temp_entry);
    if(temp_entry!=NULL) {
 	   fprintf(stderr,"*****Error, handler id%d already registered\n",function_id);
    	   exit(-1);
    }
    HASH_ADD_INT(am_maphashptr, id, temp_handler_entry);
-   /* shmem attach is a collective operation */
+   /* shmem attach is a collective operation. This might change in the future */
    shmem_barrier_all();
 }
 
@@ -86,10 +99,44 @@ shmemx_am_detach(int handler_id)
    free(am_maphashptr);                           /* optional */
 }
 
+#ifdef EESHMEM_ENABLED
+#ifdef EESHMEM_GLOBAL_UPDATE
+
+#define SET_PADDING_BUF \
+         void* temp_source_addr = source_addr; \
+         source_addr = malloc(nbytes+2*REC_SIZE); \
+         if(nbytes) memcpy((source_addr+2*REC_SIZE),temp_source_addr,nbytes);\
+         memset(source_addr,0,2*REC_SIZE); \
+         nbytes+=2*REC_SIZE;
+
+#define RESET_PADDING_BUF \
+        free(source_addr); \
+        source_addr = temp_source_addr;
+
+#define PACK_RECENT_CTRL_UPDATE \
+      memcpy((source_addr+OFFSET_RECENT_RECORD), &(bcast_handler_entry),sizeof(struct shmemx_am_handler2id_map)); \
+      bcast_handler_entry.id=-1; \
+
+#define PACK_GLOBAL_CTRL_UPDATE \
+   struct shmemx_am_handler2id_map* remotetemp_handler_entry; \
+   HASH_FIND_INT( am_maphashptr, &handler_id, remotetemp_handler_entry ); \
+   memcpy((source_addr+OFFSET_GLOBAL_RECORD), remotetemp_handler_entry, \
+           sizeof(struct shmemx_am_handler2id_map)); \
+
+#endif /* EESHMEM_GLOBAL_UPDATE */
+#endif /* EESHMEM_ENABLED */ 
+
 
 void
 shmemx_am_request(int dest, int handler_id, void* source_addr, size_t nbytes)
 {
+#ifdef EESHMEM_ENABLED
+   #ifdef EESHMEM_GLOBAL_UPDATE
+     SET_PADDING_BUF
+     PACK_RECENT_CTRL_UPDATE
+     PACK_GLOBAL_CTRL_UPDATE
+   #endif
+#endif
    request_cnt++;
    //atomic_inc_am_counter();
    GASNET_SAFE(gasnet_AMRequestMedium2 
@@ -97,18 +144,35 @@ shmemx_am_request(int dest, int handler_id, void* source_addr, size_t nbytes)
 		    source_addr, nbytes, 
 		    handler_id, 
 		    shmem_my_pe()));
+#ifdef EESHMEM_ENABLED
+   #ifdef EESHMEM_GLOBAL_UPDATE
+     RESET_PADDING_BUF
+   #endif
+#endif
 }
 
 
 void
 shmemx_am_reply(int handler_id, void* source_addr, size_t nbytes, shmemx_am_token_t temp_token)
 {
+#ifdef EESHMEM_ENABLED
+   #ifdef EESHMEM_GLOBAL_UPDATE
+     SET_PADDING_BUF
+     PACK_RECENT_CTRL_UPDATE
+     PACK_GLOBAL_CTRL_UPDATE
+  #endif
+#endif
    GASNET_SAFE(gasnet_AMReplyMedium2 
 		  ((gasnet_token_t)temp_token->gasnet_token, GASNET_HANDLER_activemsg_reply_handler, 
 	           source_addr, nbytes, 
 		   handler_id, 
 		   shmem_my_pe()));
    temp_token->is_reply_called = 1;
+#ifdef EESHMEM_ENABLED
+   #ifdef EESHMEM_GLOBAL_UPDATE
+     RESET_PADDING_BUF
+   #endif
+#endif
 }
 
 

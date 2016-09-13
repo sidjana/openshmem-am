@@ -2232,10 +2232,8 @@ uint64_t power_unit;
             if(remote_handler_entry->id!=-1) { \
                struct shmemx_am_handler2id_map* new_handler_entry; \
                HASH_FIND_INT( am_maphashptr, &(remote_handler_entry->id), new_handler_entry ); \
-    	       if(remote_handler_entry->timestamp > new_handler_entry->timestamp) { \
+    	       if(remote_handler_entry->timestamp > new_handler_entry->timestamp)  \
               	  MEMCPY_BUF(new_handler_entry,remote_handler_entry); \
-                  printf("Update from feedback TS; %d\n",remote_handler_entry->timestamp); \
-               }\
             }
 
     #define UPDATE_GLOBAL_CTRL \
@@ -2250,7 +2248,6 @@ uint64_t power_unit;
 
      #define PREP_BCAST_BUFF \
 	memcpy(&bcast_handler_entry,temp_handler_entry,sizeof(bcast_handler_entry)); \
-        printf("Updating bcast buffer for %d\n", temp_handler_entry->id);
 
 #else  /* EESHMEM_GLOBAL_UPDATE */
 
@@ -2294,7 +2291,7 @@ uint64_t power_unit;
              temp_handler_entry->best_pstate,  \
              current_pstate, \
              temp_handler_entry->next_pstate); \
-             UPDATE_GLOBAL_CTRL                                \
+            /*UPDATE_GLOBAL_CTRL */                               \
     printf("Post:TS: %d, Best pstate:%d, Current Pstate:%d, Next pstate:%d\n", \
              temp_handler_entry->timestamp,  \
              temp_handler_entry->best_pstate,  \

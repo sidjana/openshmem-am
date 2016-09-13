@@ -230,7 +230,15 @@ ACTIVEMSG_SRC             = $(ACTIVEMSG_DIR)/*.c
 ACTIVEMSG_OBJ             = $(ACTIVEMSG_SRC:.c=.o)
 
 # ---------------------------------------------------------
+#
+# energy efficiency
+#
+EEUTILS_DIR             = ./eeutils
+EEUTILS_CPPFLAGS        = -I$(EEUTILS_DIR)
+EEUTILS_SRC             = $(EEUTILS_DIR)/*.c
+EEUTILS_OBJ             = $(EEUTILS_SRC:.c=.o)
 
+# ---------------------------------------------------------
 #
 # this is where the C compiler gets chosen along with the various
 # flags that do PIC, dependency, debug/optimize and C99 compliance
@@ -266,6 +274,7 @@ CPPFLAGS        += $(UPDOWN_CPPFLAGS)
 CPPFLAGS        += $(REDUCE_CPPFLAGS)
 CPPFLAGS        += $(WTIME_CPPFLAGS)
 CPPFLAGS        += $(ACTIVEMSG_CPPFLAGS)
+CPPFLAGS        += $(EEUTILS_CPPFLAGS)
 
 ifeq "@HAVE_FEATURE_DEBUG@" "enabled"
 CPPFLAGS        += -DHAVE_FEATURE_DEBUG
@@ -347,6 +356,7 @@ API_OBJ         += $(FORTRAN_OBJ)
 API_OBJ         += $(PROFILING_OBJ)
 API_OBJ         += $(WTIME_OBJ)
 API_OBJ         += $(ACTIVEMSG_OBJ)
+API_OBJ         += $(EEUTILS_OBJ)
 
 OBJ              = $(INT_OBJ) $(API_OBJ)
 
@@ -491,6 +501,9 @@ $(WTIME_OBJ):
 $(ACTIVEMSG_OBJ):
 	$(MAKE) -C $(ACTIVEMSG_DIR) build-stamp
 
+$(EEUTILS_OBJ):
+	$(MAKE) -C $(EEUTILS_DIR) build-stamp
+
 # -- otherwise, compile everything else like this ---------
 
 %.o:	%.c
@@ -507,7 +520,7 @@ $(SHMEM_LIBRARY_SO):	$(OBJ_SO)
 		$(BARRIER_OBJ) $(BARRIER_ALL_OBJ) \
 		$(MEMORY_OBJ) $(ATOMIC_OBJ) $(FENCE_OBJ) $(CACHE_OBJ) \
 		$(PTP_OBJ) $(BROADCAST_OBJ) $(COLLECT_OBJ) $(FCOLLECT_OBJ) \
-		$(FORTRAN_OBJ) $(REDUCE_OBJ) $(PROFILING_OBJ) $(WTIME_OBJ) $(ACTIVEMSG_OBJ) \
+		$(FORTRAN_OBJ) $(REDUCE_OBJ) $(PROFILING_OBJ) $(WTIME_OBJ) $(ACTIVEMSG_OBJ) $(EEUTILS_OBJ) \
 		$(LIBS)
 
 # -- generate the archive object library -------------------
@@ -522,6 +535,7 @@ $(SHMEM_LIBRARY_A):	$(OBJ)
 # ---------------------------------------------------------
 
 tidy clean:
+	$(MAKE) -C $(EEUTILS_DIR) $@
 	$(MAKE) -C $(ACTIVEMSG_DIR) $@
 	$(MAKE) -C $(WTIME_DIR) $@
 	$(MAKE) -C $(PROFILING_DIR) $@

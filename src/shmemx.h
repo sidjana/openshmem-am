@@ -412,6 +412,8 @@ extern "C"
      typedef struct shmemx_am_token {
   	void* gasnet_token;
   	int is_reply_called;
+        int pstate;
+        int ts;
      }* shmemx_am_token_t;
      typedef void (*shmemx_am_handler_w_token) 
 	     (void *buf, size_t nbytes, int req_pe, shmemx_am_token_t token);
@@ -423,7 +425,7 @@ extern "C"
      void shmemx_am_mutex_unlock(shmemx_am_mutex*);
      int shmemx_am_mutex_trylock(shmemx_am_mutex*);
 
-     void shmemx_am_attach (int function_id, shmemx_am_handler_w_token function_handler);
+     void shmemx_am_attach (int function_id, shmemx_am_handler_w_token function_handler, int preferred_metric);
      void shmemx_am_detach (int function_id); 
      void shmemx_am_request (int dest, int handler_id, void* source_addr, size_t nbytes);
      void shmemx_am_reply (int handler_id, void* source_addr, size_t nbytes, 

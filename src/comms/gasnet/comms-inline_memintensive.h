@@ -87,13 +87,11 @@
 #include "comms-shared.h"
 
 #if defined(HAVE_FEATURE_EXPERIMENTAL) 
-#include <math.h>
 #include "cpufreq.h"
 #include "rtc.h"
 #include <float.h>
 #include "/home/siddhart/opt/x86_adapt/library/x86_adapt.h"
 #define EESHMEM_ENABLED
-
 #endif /* HAVE_FEATURE_EXPERIMENTAL */
 
 
@@ -2167,29 +2165,18 @@ struct shmemx_am_handler2id_map {
     int id; /* user defined handler */
     shmemx_am_handler_w_token fn_ptr;
     UT_hash_handle hh;
-    int metric_choice_code;
-    int pstate_direction;
-    int best_pstate;
-    int next_pstate;   
-    int timestamp;
-    double best_metric;
+    int pstate;
     PSTATE_STATUS flag;
+    double expected_time;
+    int is_mem_intensive;
 };
 extern struct shmemx_am_handler2id_map *am_maphashptr;
-extern volatile struct shmemx_am_handler2id_map bcast_handler_entry;
-extern volatile int request_cnt;
+extern int volatile request_cnt;
 
 #ifdef EESHMEM_ENABLED   
 
 #define LOWER_PSTATE(y) (y == 0)?y:y-1
 #define INC_PSTATE(y)   (y == MAX_FREQ_CNT-1)?y:y+1
-
-#define EESHMEM_GLOBAL_UPDATE
-#ifdef  EESHMEM_GLOBAL_UPDATE
-#define REC_SIZE sizeof(struct shmemx_am_handler2id_map)
-#define OFFSET_GLOBAL_RECORD 0*REC_SIZE
-#define OFFSET_RECENT_RECORD 1*REC_SIZE
-#endif
 
 static int rapl_monitor_initialized=0;
 int x86_fptr;
@@ -2200,73 +2187,9 @@ static int conf_id_powerunit=-1;
 static double energy_scale;
 uint64_t power_unit;
 
-
-#ifdef  EESHMEM_GLOBAL_UPDATE
-           
-     #define ADJUST_BUFF_SRT_ADD \
-             nbytes-=2*REC_SIZE; \
-             if(nbytes==0) buf=NULL; \
-     	     else buf+=2*REC_SIZE;
-
-     #define MEMCPY_BUF(dest_buf,src_buf) { \
-             dest_buf->id= \
-             src_buf->id; \
-             dest_buf->metric_choice_code= \
-             src_buf->metric_choice_code; \
-             dest_buf->pstate_direction= \
-             src_buf->pstate_direction; \
-             dest_buf->best_pstate= \
-             src_buf->best_pstate; \
-             dest_buf->next_pstate=   \
-             src_buf->next_pstate;   \
-             dest_buf->timestamp= \
-             src_buf->timestamp; \
-             dest_buf->best_metric= \
-             src_buf->best_metric; \
-             dest_buf->flag= \
-             src_buf->flag; }
-
-     #define UPDATE_RECENT_CTRL \
-            struct shmemx_am_handler2id_map* remote_handler_entry = \
-                 (struct shmemx_am_handler2id_map*)(buf+OFFSET_RECENT_RECORD); \
-            if(remote_handler_entry->id!=-1) { \
-               struct shmemx_am_handler2id_map* new_handler_entry; \
-               HASH_FIND_INT( am_maphashptr, &(remote_handler_entry->id), new_handler_entry ); \
-    	       if(remote_handler_entry->timestamp > new_handler_entry->timestamp) { \
-              	  MEMCPY_BUF(new_handler_entry,remote_handler_entry); \
-                  printf("Update from feedback TS; %d\n",remote_handler_entry->timestamp); \
-               }\
-            }
-
-    #define UPDATE_GLOBAL_CTRL \
-            struct shmemx_am_handler2id_map* src_buf= \
-                  (struct shmemx_am_handler2id_map*)(buf+OFFSET_GLOBAL_RECORD); \
-            if(src_buf->timestamp > temp_handler_entry->timestamp){  \
-               if(src_buf->id!=temp_handler_entry->id) \
-    	          printf("Error: IDs  mismatch\n");\
-               MEMCPY_BUF(temp_handler_entry,src_buf) \
-               printf("Need to update from global data TS: %d\n",temp_handler_entry->timestamp); \
-            }
-
-     #define PREP_BCAST_BUFF \
-	memcpy(&bcast_handler_entry,temp_handler_entry,sizeof(bcast_handler_entry)); \
-        printf("Updating bcast buffer for %d\n", temp_handler_entry->id);
-
-#else  /* EESHMEM_GLOBAL_UPDATE */
-
-     #define UPDATE_RECENT_CTRL 
-     #define UPDATE_GLOBAL_CTRL
-     #define ADJUST_BUFF_SRT_ADD 
-     #define PREP_BCAST_BUFF 
-
-#endif /* EESHMEM_GLOBAL_UPDATE */
-
-
 #define INIT_RAPL 				\
-    static uint64_t power_unit;			\
-    static double energy_scale;			\
-    static int rapl_monitor_initialized=0;      \
     if(!rapl_monitor_initialized) {		\
+    	rapl_monitor_initialized=1;		\
     	int iret=x86_adapt_init();		\
     	if(iret<0) {printf("Error at INIT"); exit(1);}			\
     	x86_fptr = x86_adapt_get_device(X86_ADAPT_CPU,0);		\
@@ -2279,111 +2202,70 @@ uint64_t power_unit;
     	 */						\
     	uint64_t r = (power_unit & 0x1F00) >> 8;	\
     	energy_scale = 1./pow(2.,(double)r);		\
-    	rapl_monitor_initialized=1;		\
-	bcast_handler_entry.id=-1;		\
-	bcast_handler_entry.timestamp=-1;	\
    } 
 
-#define PRE_FUNC_PROCESS				    \
-    long long unsigned int start_time, stop_time, res;      \
-    int current_pstate;   				    \
-    uint64_t stop_cpuenergy, start_cpuenergy;		    \
-    if(temp_handler_entry->metric_choice_code!=0) {         \
-    printf("Pre:TS: %d, Best pstate:%d, Current Pstate:%d, Next pstate:%d\n", \
-             temp_handler_entry->timestamp,  \
-             temp_handler_entry->best_pstate,  \
-             current_pstate, \
-             temp_handler_entry->next_pstate); \
-             UPDATE_GLOBAL_CTRL                                \
-    printf("Post:TS: %d, Best pstate:%d, Current Pstate:%d, Next pstate:%d\n", \
-             temp_handler_entry->timestamp,  \
-             temp_handler_entry->best_pstate,  \
-             current_pstate, \
-             temp_handler_entry->next_pstate); \
-      if(temp_handler_entry->flag!=BEST) {                  \
-          UPDATE_GLOBAL_CTRL                                \
-          current_pstate = temp_handler_entry->next_pstate; \
-      } else                                               \
-          current_pstate = temp_handler_entry->best_pstate;  \
-      current_pstate=temp_handler_entry->next_pstate; \
-      temp_token->pstate=current_pstate; 	            \
-      temp_token->ts=temp_handler_entry->timestamp;         \
-      write_self_cpufreq(freqarr[current_pstate]);          \
-      get_rtc_res_(&res); 			            \
-      get_rtc_(&start_time);			            \
-      x86_adapt_get_setting(x86_fptr, conf_id_core, &start_cpuenergy); \
-      start_cpuenergy = start_cpuenergy & 0xFFFFFFFF; 	\
-    }
+
+#define PRE_FUNC_PROCESS				\
+  double current_time, expected_time; 		\
+  long long unsigned int start_time, stop_time, res;  \
+  int current_pstate, old_pstate, old_flag;		       	\
+  uint64_t stop_cpuenergy, start_cpuenergy;		\
+  if(temp_handler_entry->is_mem_intensive!=-1) {        \
+    expected_time = temp_handler_entry->expected_time;  \
+    old_pstate = temp_handler_entry->pstate;            \
+    old_flag=temp_handler_entry->flag;                  \
+    /* EE:set frequency */			        \
+    if(old_flag==BEST || old_flag==INIT)                        \
+	current_pstate=old_pstate;     		        \
+    else {					        \
+	if(temp_handler_entry->is_mem_intensive==0)     \
+	  current_pstate=LOWER_PSTATE(old_pstate);      \
+	else                                            \
+	  current_pstate=INC_PSTATE(old_pstate);        \
+    }                                                   \
+    temp_token->pstate=current_pstate; 		        \
+    write_self_cpufreq(freqarr[current_pstate]);        \
+    /* EE:start recording time */		        \
+    get_rtc_res_(&res); 			        \
+    get_rtc_(&start_time);			        \
+    x86_adapt_get_setting(x86_fptr, conf_id_core, &start_cpuenergy); \
+    start_cpuenergy = start_cpuenergy & 0xFFFFFFFF; 	\
+  }
+
 
 #define POST_FUNC_PROCESS				\
-    if(temp_handler_entry->metric_choice_code!=0) {     \
-      get_rtc_(&stop_time);    				\
-      x86_adapt_get_setting(x86_fptr, conf_id_core, &stop_cpuenergy); \
-      stop_cpuenergy  = stop_cpuenergy  & 0xFFFFFFFF;   \
-      double current_metric; 				\
-      if(stop_cpuenergy<start_cpuenergy) 		\
-          stop_cpuenergy += 0x100000000;		\
-      write_self_cpufreq(freqarr[ORIGINAL_PSTATE]);     \
-      switch(temp_handler_entry->metric_choice_code) {  \
-         case 1: /*time*/		                \
-           current_metric=(double)((stop_time-start_time)*1.0/res); \
-           break; \
-         case 2: /*energy*/ \
-           current_metric=energy_scale*(stop_cpuenergy-start_cpuenergy); \
-           break; \
-         case 3: /*power*/ \
-           current_metric=energy_scale*(stop_cpuenergy-start_cpuenergy)/ \
-          		(double)((stop_time-start_time)*1.0/res);  \
-           break; \
-         case 4: /*EDP*/ \
-           current_metric=(double)((stop_time-start_time)*1.0/res)* \
-          		 energy_scale*(stop_cpuenergy-start_cpuenergy); \
-      } \
-      if(temp_handler_entry->flag!=BEST) {\
-          if(temp_handler_entry->metric_choice_code==1) { /* metric=TIME */   \
-               if(current_pstate==MAX_FREQ_CNT)	 	\
-                  temp_handler_entry->flag=BEST; 		\
-               else { 					\
-                  temp_handler_entry->next_pstate=LOWER_PSTATE(current_pstate); \
-                  temp_handler_entry->best_pstate=current_pstate; \
-                  temp_handler_entry->best_metric=current_metric; \
-                  temp_handler_entry->flag=UPDATED; \
-               } \
-          } else { \
-              if(temp_handler_entry->best_metric>current_metric) { \
-                 temp_handler_entry->best_metric=current_metric;  \
-                 temp_handler_entry->best_pstate = current_pstate; \
-                 temp_handler_entry->flag=UPDATED; \
-                 if(temp_handler_entry->pstate_direction==1) \
-                    temp_handler_entry->next_pstate=LOWER_PSTATE(current_pstate); \
-                 else \
-                    temp_handler_entry->next_pstate=INC_PSTATE(current_pstate); \
-              } else { /* value bad */ \
-                 if(temp_handler_entry->pstate_direction==1 ) { \
-                    temp_handler_entry->pstate_direction=-1; \
-                    temp_handler_entry->next_pstate=INC_PSTATE(temp_handler_entry->best_pstate); \
-                    temp_handler_entry->flag=UPDATED; \
-                 }else { /* Either Metric==Power OR Already in freq decrease phase */ \
-                    temp_handler_entry->flag=BEST; \
-                    temp_handler_entry->next_pstate=temp_handler_entry->best_pstate; \
-		 }\
-              }\
-          }\
-      }\
-      temp_handler_entry->timestamp+=1; \
-      PREP_BCAST_BUFF \
-      /* printf("Best pstate:%d, Current Pstate:%d, Next pstate:%d, " \
-             "Current metric:%12g, Next metric:%12g\n", \
-             temp_handler_entry->best_pstate,  \
-             current_pstate, \
-             temp_handler_entry->next_pstate,  \
-             current_metric, \
-             temp_handler_entry->best_metric); */ \
-    }
+  if(temp_handler_entry->is_mem_intensive!=-1) {        \
+    get_rtc_(&stop_time);    				\
+    x86_adapt_get_setting(x86_fptr, conf_id_core, &stop_cpuenergy); \
+    stop_cpuenergy  = stop_cpuenergy  & 0xFFFFFFFF;		    \
+    if(stop_cpuenergy<start_cpuenergy) 				    \
+        stop_cpuenergy += 0x100000000;			 	    \
+    /* EE:reset frequency */ 					    \
+    write_self_cpufreq(freqarr[ORIGINAL_PSTATE]);           	    \
+    int change_flag = 0;                                            \
+    /* EE:check if freqshift was needed */ 	            	    \
+    /* if((1.1*temp_handler_entry->expected_time) >         	    \
+	   (double)((stop_time-start_time)*1.0/res)) { */   	    \
+    double energy=energy_scale*(stop_cpuenergy-start_cpuenergy);    \
+    double time=(double)((stop_time-start_time)*1.0/res);	    \
+    double power=energy/time;					    \
+    if(power<50) 						    \
+       change_flag = 1; 					    \
+    if(change_flag) {					    	    \
+       temp_handler_entry->pstate=current_pstate;	    	    \
+       temp_handler_entry->flag=UPDATED;		    	    \
+    }							    	    \
+    else { \
+       if(old_flag==INIT) \
+       	   temp_handler_entry->is_mem_intensive=1;  \
+       else \
+           temp_handler_entry->flag=BEST; \
+   } \
+    printf("Energy = %12g\t; Time = %12g\t; Power = %12g\t; EDP = %12g\n",    \
+	   energy,time,power,energy*time); \
+  }
 
-
-
-#endif /* EESHMEM_ENABLED */
+#endif
 
 static inline void
 handler_activemsg_request(gasnet_token_t token, 
@@ -2398,16 +2280,18 @@ handler_activemsg_request(gasnet_token_t token,
     temp_token->gasnet_token = token;
     temp_token->is_reply_called = 0;
 
-    #ifdef EESHMEM_ENABLED   
-        INIT_RAPL
-        PRE_FUNC_PROCESS
-        UPDATE_RECENT_CTRL
-        ADJUST_BUFF_SRT_ADD
-    #endif
+#ifdef EESHMEM_ENABLED   
+    static int rapl_monitor_initialized=0;
+    static uint64_t power_unit;
+    static double energy_scale;
+    INIT_RAPL
+    PRE_FUNC_PROCESS
+#endif
     temp_handler_entry->fn_ptr(buf, nbytes, req_pe, temp_token);
-    #ifdef EESHMEM_ENABLED   
-        POST_FUNC_PROCESS
-    #endif
+#ifdef EESHMEM_ENABLED   
+    POST_FUNC_PROCESS
+#endif
+
 
     if(!temp_token->is_reply_called) {
         GASNET_SAFE(gasnet_AMReplyMedium2 
@@ -2428,19 +2312,20 @@ handler_activemsg_reply (gasnet_token_t token,
     struct shmemx_am_handler2id_map* temp_handler_entry;
     if (handler_id != -1) {
         HASH_FIND_INT( am_maphashptr, &handler_id, temp_handler_entry );
-        shmemx_am_token_t temp_token = (shmemx_am_token_t) malloc(sizeof(*temp_token));
+        shmemx_am_token_t temp_token = malloc(sizeof(*temp_token));
         temp_token->gasnet_token = token;
 
-        #ifdef EESHMEM_ENABLED   
-            INIT_RAPL
-            UPDATE_GLOBAL_CTRL
-            PRE_FUNC_PROCESS
-            ADJUST_BUFF_SRT_ADD
-        #endif
+#ifdef EESHMEM_ENABLED   
+        static int rapl_monitor_initialized=0;
+        static uint64_t power_unit;
+        static double energy_scale;
+        INIT_RAPL
+        PRE_FUNC_PROCESS
+#endif
         temp_handler_entry->fn_ptr(buf, nbytes, req_pe, temp_token);
-        #ifdef EESHMEM_ENABLED   
-            POST_FUNC_PROCESS
-        #endif
+#ifdef EESHMEM_ENABLED   
+        POST_FUNC_PROCESS
+#endif
     }
     request_cnt--;
     atomic_dec_am_counter();

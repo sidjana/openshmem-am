@@ -1329,9 +1329,9 @@ int FORTRANIFY (shmemx_quiet_test) (void)
 #define shmemx_am_poll_ pshmemx_am_poll_
 #endif /* HAVE_FEATURE_PSHMEM */
 
-void FORTRANIFY(shmemx_am_attach) (int* function_id, shmemx_am_handler_w_token* function_handler)
+void FORTRANIFY(shmemx_am_attach) (int* function_id, shmemx_am_handler_w_token* function_handler, int* is_mem_intensive)
 {
-    shmemx_am_attach (*function_id, *function_handler);
+    shmemx_am_attach (*function_id, *function_handler, *is_mem_intensive);
 }
 
 void FORTRANIFY(shmemx_am_detach) (int* function_id)
